@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
+    <title>PWU CDCEC | Login</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+        * { box-sizing: border-box; }
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #f0f2f5; 
+            -webkit-tap-highlight-color: transparent;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .bg-pw-maroon { background-color: #800000; }
+        .text-pw-maroon { color: #800000; }
+        .border-pw-maroon { border-color: #800000; }
+        
+        .login-card {
+            max-width: 420px;
+            width: 100%;
+            margin: 20px;
+        }
+        
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            max-width: 90%;
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 13px;
+            color: white;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            display: none;
+            text-align: center;
+        }
+        .toast.error { background: #dc2626; border: 1px solid #b91c1c; }
+        .toast.success { background: #16a34a; border: 1px solid #15803d; }
+        
+        .spinner {
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 0.8s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .btn-loading .spinner {
+            display: inline-block;
+        }
+        .btn-loading .btn-text {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Login Card -->
+    <div class="login-card">
+        <div class="bg-white rounded-[28px] shadow-xl border border-gray-200 p-8 relative overflow-hidden">
+            <!-- Decorative background -->
+            <div class="absolute -top-20 -right-20 w-64 h-64 bg-pw-maroon/5 rounded-full"></div>
+            <div class="absolute -bottom-20 -left-20 w-64 h-64 bg-pw-maroon/5 rounded-full"></div>
+            
+            <!-- Logo -->
+            <div class="relative z-10 text-center">
+                <div class="w-20 h-20 bg-pw-maroon text-white rounded-full flex items-center justify-center font-black text-3xl mx-auto mb-4 shadow-lg border-4 border-white ring-2 ring-pw-maroon/20">
+                    PWU
+                </div>
+                <h1 class="text-[24px] font-black text-gray-900 tracking-tight">PWU CDCEC</h1>
+                <p class="text-[13px] font-bold text-gray-500 mb-1 tracking-wide">Santa Cruz, Laguna</p>
+                
+                <div class="bg-red-50 border border-red-100 rounded-xl p-3 my-5 text-center">
+                    <p class="text-[14px] font-black text-pw-maroon uppercase tracking-widest">Grade 12 ICT</p>
+                    <p class="text-[10px] font-bold text-gray-700 uppercase tracking-wide">Adviser: Ms. Rosalyn L. Matienzo</p>
+                </div>
+            </div>
+
+            <!-- Login Form -->
+            <form id="loginForm" class="relative z-10" onsubmit="handleLogin(event)">
+                <p class="text-center text-[11px] font-bold text-gray-400 mb-6 uppercase tracking-widest">Sign in to your account</p>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-[10px] font-black text-gray-500 uppercase tracking-widest pl-1 mb-2 block">Email Address</label>
+                        <div class="relative">
+                            <i class="fas fa-envelope absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                            <input type="email" id="email" placeholder="student@pwu.edu" 
+                                   class="w-full pl-11 pr-4 py-4 bg-gray-50 rounded-xl text-sm font-bold border-2 border-gray-200 focus:outline-none focus:border-pw-maroon focus:bg-white text-gray-900 transition-colors"
+                                   required>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="text-[10px] font-black text-gray-500 uppercase tracking-widest pl-1 mb-2 block">Password</label>
+                        <div class="relative">
+                            <i class="fas fa-lock absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                            <input type="password" id="password" placeholder="••••••••" 
+                                   class="w-full pl-11 pr-4 py-4 bg-gray-50 rounded-xl text-sm font-bold border-2 border-gray-200 focus:outline-none focus:border-pw-maroon focus:bg-white text-gray-900 transition-colors"
+                                   required>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" id="loginBtn" 
+                            class="w-full bg-pw-maroon text-white py-4 rounded-xl text-[13px] font-black shadow-md hover:bg-red-900 transition-colors mt-6 uppercase tracking-wider flex items-center justify-center gap-2">
+                        <span class="btn-text">Sign In</span>
+                        <span class="spinner" style="display:none;"></span>
+                    </button>
+                </div>
+            </form>
+
+            <!-- Footer -->
+            <div class="relative z-10 mt-8 text-center pt-6 border-t border-gray-100">
+                <span class="text-[11px] text-gray-500 font-bold">New student?</span>
+                <a href="#" onclick="showSignup()" class="text-[11px] text-pw-maroon font-black hover:underline ml-1">Create Account</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signup Modal (Hidden by default) -->
+    <div id="signupModal" style="display:none;" class="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" onclick="closeSignup(event)">
+        <div class="bg-white w-full max-w-sm rounded-[24px] p-7 shadow-2xl border border-gray-200 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="font-black text-2xl text-gray-900">Create Account</h2>
+                <button onclick="closeSignup()" class="text-gray-400 hover:text-gray-600 w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center"><i class="fas fa-times"></i></button>
+            </div>
+            <p class="text-[11px] text-gray-500 mb-5 font-bold uppercase tracking-wider">Join PWU CDCEC portal</p>
+            
+            <form id="signupForm" onsubmit="handleSignup(event)">
+                <div class="space-y-3">
+                    <div class="flex gap-2">
+                        <input type="text" id="r-fname" placeholder="First Name *" class="w-full p-4 border-2 border-gray-200 bg-gray-50 rounded-xl text-sm font-bold focus:border-pw-maroon focus:bg-white outline-none" required>
+                        <input type="text" id="r-minit" placeholder="M.I." class="w-20 p-4 border-2 border-gray-200 bg-gray-50 rounded-xl text-sm font-bold focus:border-pw-maroon focus:bg-white outline-none text-center">
+                    </div>
+                    <input type="text" id="r-lname" placeholder="Last Name *" class="w-full p-4 border-2 border-gray-200 bg-gray-50 rounded-xl text-sm font-bold focus:border-pw-maroon focus:bg-white outline-none" required>
+                    <input type="email" id="r-email" placeholder="School Email *" class="w-full p-4 border-2 border-gray-200 bg-gray-50 rounded-xl text-sm font-bold focus:border-pw-maroon focus:bg-white outline-none" required>
+                    <input type="password" id="r-pass" placeholder="Password (min 6 chars) *" class="w-full p-4 border-2 border-gray-200 bg-gray-50 rounded-xl text-sm font-bold focus:border-pw-maroon focus:bg-white outline-none" required minlength="6">
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-[10px] font-black text-gray-500 uppercase pl-1 block mb-1">Birth Date *</label>
+                            <input type="date" id="r-bday" class="w-full p-3.5 border-2 border-gray-200 bg-gray-50 rounded-xl text-sm font-bold focus:border-pw-maroon focus:bg-white outline-none" required>
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-black text-gray-500 uppercase pl-1 block mb-1">LRN (12 digits) *</label>
+                            <input type="number" id="r-lrn" placeholder="123456789012" class="w-full p-3.5 border-2 border-gray-200 bg-gray-50 rounded-xl text-sm font-bold focus:border-pw-maroon focus:bg-white outline-none" required>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" id="signupBtn" class="w-full bg-pw-maroon text-white py-4 rounded-xl text-[13px] font-black shadow-md hover:bg-red-900 transition-colors mt-4 uppercase tracking-wider flex items-center justify-center gap-2">
+                        <span class="btn-text">Register Account</span>
+                        <span class="spinner" style="display:none;"></span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // API HELPERS
+        // ============================================================
+        //const API_BASE = '/api';
+        const API_BASE = 'https://classroom-ten-zeta.vercel.app/api';
+
+        async function apiCall(endpoint, options = {}) {
+            const res = await fetch(`${API_BASE}${endpoint}`, {
+                ...options,
+                headers: { 'Content-Type': 'application/json', ...options.headers },
+                body: options.body ? JSON.stringify(options.body) : undefined,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Request failed');
+            return data;
+        }
+
+        // ============================================================
+        // TOAST NOTIFICATION
+        // ============================================================
+        function showToast(message, type = 'error') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type}`;
+            toast.style.display = 'block';
+            
+            clearTimeout(toast._timeout);
+            toast._timeout = setTimeout(() => {
+                toast.style.display = 'none';
+            }, 4000);
+        }
+
+        // ============================================================
+        // LOADING STATE
+        // ============================================================
+        function setLoading(buttonId, loading) {
+            const btn = document.getElementById(buttonId);
+            const text = btn.querySelector('.btn-text');
+            const spinner = btn.querySelector('.spinner');
+            if (loading) {
+                btn.disabled = true;
+                text.style.display = 'none';
+                spinner.style.display = 'inline-block';
+            } else {
+                btn.disabled = false;
+                text.style.display = 'inline';
+                spinner.style.display = 'none';
+            }
+        }
+
+        // ============================================================
+        // LOGIN
+        // ============================================================
+        async function handleLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value.trim();
+
+            if (!email || !password) {
+                return showToast('Please fill in all fields', 'error');
+            }
+
+            setLoading('loginBtn', true);
+
+            try {
+                const data = await apiCall('/login', {
+                    method: 'POST',
+                    body: { email, password }
+                });
+
+                // Save session
+                sessionStorage.setItem('user', JSON.stringify(data.user));
+                sessionStorage.setItem('mode', data.mode);
+
+                // Redirect based on role
+                if (data.user.role === 'teacher' || data.user.role === 'president') {
+                    window.location.href = '/teacher.html';
+                } else {
+                    window.location.href = '/student.html';
+                }
+
+            } catch (err) {
+                showToast(err.message, 'error');
+                setLoading('loginBtn', false);
+            }
+        }
+
+        // ============================================================
+        // SIGNUP
+        // ============================================================
+        async function handleSignup(e) {
+            e.preventDefault();
+            
+            const fname = document.getElementById('r-fname').value.trim();
+            const minit = document.getElementById('r-minit').value.trim();
+            const lname = document.getElementById('r-lname').value.trim();
+            const email = document.getElementById('r-email').value.trim();
+            const pass = document.getElementById('r-pass').value.trim();
+            const bday = document.getElementById('r-bday').value;
+            const lrn = document.getElementById('r-lrn').value.trim();
+
+            if (!fname || !lname || !email || !pass || !bday || !lrn) {
+                return showToast('Please fill all required fields (*)', 'error');
+            }
+
+            if (pass.length < 6) {
+                return showToast('Password must be at least 6 characters', 'error');
+            }
+
+            if (!/^\d{12}$/.test(lrn)) {
+                return showToast('LRN must be exactly 12 digits', 'error');
+            }
+
+            setLoading('signupBtn', true);
+
+            try {
+                await apiCall('/register', {
+                    method: 'POST',
+                    body: {
+                        firstName: fname,
+                        middleInitial: minit,
+                        lastName: lname,
+                        email,
+                        password: pass,
+                        birthday: bday,
+                        lrn
+                    }
+                });
+
+                showToast('Account created! Please log in.', 'success');
+                closeSignup();
+                setLoading('signupBtn', false);
+                
+                // Clear form
+                document.getElementById('signupForm').reset();
+
+            } catch (err) {
+                showToast(err.message, 'error');
+                setLoading('signupBtn', false);
+            }
+        }
+
+        // ============================================================
+        // MODAL CONTROLS
+        // ============================================================
+        function showSignup() {
+            document.getElementById('signupModal').style.display = 'flex';
+        }
+
+        function closeSignup(e) {
+            if (e && e.target !== e.currentTarget) return;
+            document.getElementById('signupModal').style.display = 'none';
+        }
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeSignup();
+        });
+
+        // ============================================================
+        // SESSION CHECK - If already logged in, redirect
+        // ============================================================
+        (function checkSession() {
+            const user = sessionStorage.getItem('user');
+            if (user) {
+                try {
+                    const parsed = JSON.parse(user);
+                    if (parsed.role === 'teacher' || parsed.role === 'president') {
+                        window.location.href = '/teacher.html';
+                    } else {
+                        window.location.href = '/student.html';
+                    }
+                } catch (_) {
+                    sessionStorage.removeItem('user');
+                }
+            }
+        })();
+
+        // ============================================================
+        // KEYBOARD SHORTCUT: Enter to login
+        // ============================================================
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !document.getElementById('signupModal').style.display.includes('flex')) {
+                document.getElementById('loginForm').dispatchEvent(new Event('submit'));
+            }
+        });
+    </script>
+
+</body>
+</html>

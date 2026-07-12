@@ -1,0 +1,1271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+    <title>PWU CDCEC | Teacher Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+        * { box-sizing: border-box; }
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #f0f2f5; 
+            -webkit-tap-highlight-color: transparent;
+        }
+        .bg-pw-maroon { background-color: #800000; }
+        .text-pw-maroon { color: #800000; }
+        .border-pw-maroon { border-color: #800000; }
+        
+        .app-container { 
+            max-width: 480px; 
+            margin: 0 auto; 
+            background-color: #ffffff; 
+            min-height: 100vh; 
+            position: relative; 
+            box-shadow: 0 0 30px rgba(0,0,0,0.08); 
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .toast {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            max-width: 90%;
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 13px;
+            color: white;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            display: none;
+            text-align: center;
+        }
+        .toast.error { background: #dc2626; border: 1px solid #b91c1c; }
+        .toast.success { background: #16a34a; border: 1px solid #15803d; }
+        
+        .spinner {
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 0.8s linear infinite;
+            display: inline-block;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        
+        .modal-overlay {
+            animation: fadeIn 0.25s ease-out forwards;
+        }
+        @keyframes fadeIn {
+            0% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+        .modal-content {
+            animation: slideUp 0.3s ease-out forwards;
+        }
+        @keyframes slideUp {
+            0% { opacity: 0; transform: translateY(20px) scale(0.95); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        
+        .badge-pulse {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="toast" class="toast"></div>
+    
+    <div id="app" class="app-container">
+        <div class="flex items-center justify-center h-screen">
+            <div class="spinner" style="border-color: #800000; border-top-color: transparent;"></div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // STATE
+        // ============================================================
+        let state = {
+            user: null,
+            users: [],
+            announcements: [],
+            activeCategory: 'All',
+            expandedPosts: [],
+            activeStatsId: null,
+            uploadModalId: null,
+            tempImage: null,
+            imagePreviewId: null,
+            publishExpanded: false,
+            newPostImage: null,
+            promoteModalId: null,
+            removeModalId: null,
+            activeMenuId: null,
+            view: 'dashboard',
+            loading: false,
+            toastTimer: null,
+            editingAnnouncement: null,
+            showDeleteModal: false,
+            deleteAnnouncementId: null,
+        };
+
+        // ============================================================
+        // API HELPERS
+        // ============================================================
+        const API_BASE = 'https://classroom-ten-zeta.vercel.app/api';
+
+
+        async function apiCall(endpoint, options = {}) {
+            const res = await fetch(`${API_BASE}${endpoint}`, {
+                ...options,
+                headers: { 'Content-Type': 'application/json', ...options.headers },
+                body: options.body ? JSON.stringify(options.body) : undefined,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Request failed');
+            return data;
+        }
+
+        // ============================================================
+        // SESSION CHECK
+        // ============================================================
+        function checkSession() {
+            const userJson = sessionStorage.getItem('user');
+            if (!userJson) {
+                window.location.href = '/';
+                return null;
+            }
+            try {
+                const user = JSON.parse(userJson);
+                if (user.role !== 'teacher' && user.role !== 'president') {
+                    window.location.href = '/student.html';
+                    return null;
+                }
+                return user;
+            } catch (_) {
+                sessionStorage.removeItem('user');
+                window.location.href = '/';
+                return null;
+            }
+        }
+
+        // ============================================================
+        // TOAST
+        // ============================================================
+        function showToast(message, type = 'error') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type}`;
+            toast.style.display = 'block';
+            clearTimeout(state.toastTimer);
+            state.toastTimer = setTimeout(() => {
+                toast.style.display = 'none';
+            }, 4000);
+        }
+
+        // ============================================================
+        // LOAD DATA
+        // ============================================================
+        async function loadData() {
+            try {
+                const [users, announcements] = await Promise.all([
+                    apiCall('/users'),
+                    apiCall('/announcements'),
+                ]);
+                state.users = users;
+                state.announcements = announcements;
+            } catch (e) {
+                showToast('Failed to load data: ' + e.message, 'error');
+            }
+        }
+
+        // ============================================================
+        // RENDER
+        // ============================================================
+        function render() {
+            const app = document.getElementById('app');
+            
+            if (!state.user) {
+                const user = checkSession();
+                if (!user) return;
+                state.user = user;
+            }
+
+            let mainContent = '';
+            if (state.view === 'dashboard') mainContent = renderDashboard();
+            else if (state.view === 'students') mainContent = renderStudentList();
+            else if (state.view === 'profile') mainContent = renderProfile();
+            else if (state.view === 'analytics') mainContent = renderAnalytics();
+            else if (state.view === 'manage') mainContent = renderManagePosts();
+
+            app.innerHTML = `
+                <div class="flex flex-col h-screen" onclick="closeDropdowns(event)">
+                    ${renderHeader()}
+                    <div id="main-scroll-area" class="flex-1 overflow-y-auto pb-24 no-scrollbar bg-gray-50">${mainContent}</div>
+                    ${renderBottomNav()}
+                </div>
+                ${state.activeStatsId ? renderStatsModal() : ''}
+                ${state.uploadModalId ? renderUploadModal() : ''}
+                ${state.imagePreviewId ? renderImagePreview() : ''}
+                ${state.promoteModalId ? renderPromoteModal() : ''}
+                ${state.removeModalId ? renderRemoveModal() : ''}
+                ${state.showDeleteModal ? renderDeleteModal() : ''}
+                ${state.loading ? renderLoading() : ''}
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Header
+        // ============================================================
+        function renderHeader() {
+            const mode = sessionStorage.getItem('mode') || 'admin';
+            return `
+                <header class="bg-pw-maroon text-white sticky top-0 z-20 px-4 py-3.5 flex items-center justify-between shadow-md">
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 bg-white text-pw-maroon rounded-full flex items-center justify-center font-black text-xs mr-3 shadow-sm border-2 border-pw-maroon">PWU</div>
+                        <div>
+                            <h1 class="text-[14px] font-black uppercase tracking-wide leading-tight">PWU CDCEC</h1>
+                            <p class="text-[10px] text-white/80 font-semibold tracking-wider uppercase">Teacher Portal</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <span class="text-[10px] font-bold bg-white/20 px-3 py-1 rounded-full uppercase tracking-wider">${mode}</span>
+                        <button onclick="logout()" class="hover:text-gray-200"><i class="fas fa-sign-out-alt text-[20px]"></i></button>
+                    </div>
+                </header>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Bottom Nav
+        // ============================================================
+        function renderBottomNav() {
+            const isPresident = state.user.role === 'president';
+            const mode = sessionStorage.getItem('mode') || 'admin';
+            
+            const navItems = [
+                { id: 'dashboard', icon: 'layer-group', label: 'Feed' },
+                { id: 'students', icon: 'users', label: 'Directory' },
+                { id: 'analytics', icon: 'chart-bar', label: 'Analytics' },
+                { id: 'manage', icon: 'cog', label: 'Manage' },
+                { id: 'profile', icon: 'user-circle', label: 'Profile' },
+            ];
+
+            return `
+                <nav class="fixed bottom-0 w-full max-w-[480px] bg-white border-t border-gray-200 px-1 py-2 flex justify-between items-center shadow-[0_-5px_15px_rgba(0,0,0,0.05)] z-10 pb-safe overflow-x-auto">
+                    ${navItems.map(item => `
+                        <button onclick="changeView('${item.id}')" class="flex flex-col items-center p-1.5 flex-1 min-w-[60px] ${state.view === item.id ? 'text-pw-maroon' : 'text-gray-400 hover:text-gray-600'}">
+                            <i class="fas fa-${item.icon} text-[20px] mb-0.5"></i>
+                            <span class="text-[8px] font-bold tracking-wide">${item.label}</span>
+                        </button>
+                    `).join('')}
+                    ${isPresident ? `
+                        <button onclick="toggleMode()" class="flex flex-col items-center p-1.5 flex-1 min-w-[60px] text-pw-maroon hover:bg-red-50 rounded-xl mx-0.5 border border-red-100">
+                            <i class="fas fa-exchange-alt text-[18px] mb-0.5"></i>
+                            <span class="text-[7px] font-bold tracking-wide">${mode === 'admin' ? 'Student' : 'Admin'}</span>
+                        </button>
+                    ` : ''}
+                </nav>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Dashboard
+        // ============================================================
+        function renderDashboard() {
+            const categories = ['All', 'Classroom', 'Deadlines', 'Events'];
+            const firstName = state.user.name.split(',')[1].trim().split(' ')[0];
+            const announcements = state.announcements;
+            const mode = sessionStorage.getItem('mode') || 'admin';
+            const isAdminMode = mode === 'admin';
+
+            return `
+                <div class="pb-4">
+                    <div class="bg-pw-maroon text-white px-5 pt-4 pb-8 rounded-b-[2rem] shadow-md mb-2 relative overflow-hidden">
+                        <div class="absolute -right-10 -top-10 text-white/10 text-[120px]"><i class="fas fa-chalkboard-teacher"></i></div>
+                        <div class="relative z-10">
+                            <h2 class="text-xl font-black tracking-wide">Hello, ${firstName}!</h2>
+                            <p class="text-[11px] text-white/90 font-medium mt-1">${isAdminMode ? 'Manage your classroom efficiently today.' : 'Viewing as student mode.'}</p>
+                        </div>
+                    </div>
+
+                    <div class="px-4 -mt-6 relative z-10">
+                        ${renderMetrics()}
+
+                        <div class="flex gap-2 mb-5 overflow-x-auto no-scrollbar pb-2 pt-1">
+                            ${categories.map(c => `
+                                <button onclick="state.activeCategory='${c}'; render()" class="whitespace-nowrap px-5 py-2.5 text-[11px] font-bold rounded-full border-2 ${state.activeCategory === c ? 'bg-pw-maroon text-white border-pw-maroon shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-pw-maroon hover:text-pw-maroon'}">${c}</button>
+                            `).join('')}
+                        </div>
+
+                        ${isAdminMode ? renderPostForm() : ''}
+
+                        <div class="space-y-4">
+                            ${announcements.filter(a => state.activeCategory === 'All' || a.category === state.activeCategory).map(a => renderAnnouncement(a)).join('')}
+                            ${announcements.length === 0 ? '<div class="text-center p-12 bg-white rounded-2xl border border-gray-200 shadow-sm"><i class="fas fa-folder-open text-4xl text-gray-300 mb-4 block"></i><p class="text-sm text-gray-500 font-bold">No announcements yet. Create your first post!</p></div>' : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Metrics
+        // ============================================================
+        function renderMetrics() {
+            const users = state.users;
+            const announcements = state.announcements;
+            const studentsList = users.filter(u => u.role !== 'teacher');
+            const totalStudents = studentsList.length;
+            const activePosts = announcements.length;
+
+            let totalAcks = 0;
+            announcements.forEach(a => totalAcks += a.acknowledgements.length);
+            const possibleAcks = activePosts * totalStudents;
+            const ackRate = possibleAcks === 0 ? 0 : Math.round((totalAcks / possibleAcks) * 100);
+
+            let pendingProofs = 0;
+            announcements.forEach(a => { a.proofs.forEach(p => { if(p.status === 'Pending') pendingProofs++; }); });
+
+            return `
+                <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 mb-5">
+                    <div class="flex justify-between items-end mb-2">
+                        <div>
+                            <h3 class="text-[12px] font-black text-gray-800 uppercase tracking-wide">Classroom Stats</h3>
+                            <p class="text-[10px] text-gray-500 font-bold mt-0.5">Overall Student Engagement</p>
+                        </div>
+                        <div class="text-[14px] font-black text-pw-maroon">${ackRate}%</div>
+                    </div>
+                    <div class="w-full bg-gray-100 rounded-full h-3 mb-4 shadow-inner">
+                        <div class="bg-pw-maroon h-3 rounded-full" style="width: ${ackRate}%"></div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                            <div class="w-8 h-8 rounded-full bg-white text-gray-600 flex items-center justify-center shadow-sm"><i class="fas fa-users"></i></div>
+                            <div><div class="text-[14px] font-black text-gray-800">${totalStudents}</div><div class="text-[9px] font-bold text-gray-600 uppercase">Students</div></div>
+                        </div>
+                        <div class="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                            <div class="w-8 h-8 rounded-full bg-white text-gray-600 flex items-center justify-center shadow-sm"><i class="fas fa-bullhorn"></i></div>
+                            <div><div class="text-[14px] font-black text-gray-800">${activePosts}</div><div class="text-[9px] font-bold text-gray-600 uppercase">Posts</div></div>
+                        </div>
+                        <div onclick="state.activeCategory='Events'; render();" class="flex items-center gap-3 ${pendingProofs > 0 ? 'bg-orange-50 border-orange-200 cursor-pointer hover:bg-orange-100' : 'bg-green-50 border-green-200 cursor-pointer hover:bg-green-100'} p-3 rounded-xl border">
+                            <div class="w-8 h-8 rounded-full bg-white ${pendingProofs > 0 ? 'text-orange-500' : 'text-green-500'} flex items-center justify-center shadow-sm"><i class="fas fa-clipboard-check"></i></div>
+                            <div><div class="text-[14px] font-black ${pendingProofs > 0 ? 'text-orange-600' : 'text-green-600'}">${pendingProofs}</div><div class="text-[9px] font-bold ${pendingProofs > 0 ? 'text-orange-600' : 'text-green-600'} uppercase">To Verify</div></div>
+                        </div>
+                        <div class="flex items-center gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                            <div class="w-8 h-8 rounded-full bg-white text-blue-600 flex items-center justify-center shadow-sm"><i class="fas fa-check-double"></i></div>
+                            <div><div class="text-[14px] font-black text-blue-600">${ackRate}%</div><div class="text-[9px] font-bold text-gray-600 uppercase">Avg Ack</div></div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Post Form
+        // ============================================================
+        function renderPostForm() {
+            if (!state.publishExpanded) {
+                return `
+                    <button onclick="state.publishExpanded=true; render()" class="w-full bg-white border-2 border-dashed border-gray-300 text-gray-500 p-4 rounded-2xl mb-5 shadow-sm text-left flex items-center justify-between hover:border-pw-maroon hover:text-pw-maroon group">
+                        <span class="font-bold text-sm"><i class="fas fa-edit mr-2 text-pw-maroon"></i> Create a new announcement...</span>
+                        <div class="bg-gray-100 text-gray-400 group-hover:bg-pw-maroon group-hover:text-white w-8 h-8 rounded-full flex items-center justify-center shadow-sm"><i class="fas fa-plus"></i></div>
+                    </button>
+                `;
+            }
+
+            return `
+                <div class="bg-white p-5 rounded-2xl border-2 border-pw-maroon mb-5 shadow-lg relative">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-black text-sm text-pw-maroon uppercase tracking-wide flex items-center"><i class="fas fa-bullhorn mr-2"></i> New Post</h3>
+                        <button onclick="state.publishExpanded=false; state.newPostImage=null; render()" class="text-gray-400 hover:text-gray-800 bg-gray-100 w-7 h-7 rounded-full flex items-center justify-center"><i class="fas fa-times text-[12px]"></i></button>
+                    </div>
+
+                    <label class="text-[10px] font-bold text-gray-500 uppercase block mb-1">Title</label>
+                    <input type="text" id="p-title" placeholder="e.g. Final Examination Schedule" class="w-full p-3 bg-gray-50 rounded-xl mb-3 text-sm border border-gray-200 focus:outline-none focus:border-pw-maroon font-bold text-gray-900 shadow-inner">
+
+                    <label class="text-[10px] font-bold text-gray-500 uppercase block mb-1">Category</label>
+                    <select id="p-cat" class="w-full p-3 bg-gray-50 rounded-xl mb-3 text-sm border border-gray-200 focus:outline-none focus:border-pw-maroon font-bold text-gray-700 shadow-inner">
+                        <option value="Classroom">Classroom Reminder</option>
+                        <option value="Deadlines">Project Deadline</option>
+                        <option value="Events">School Event</option>
+                        <option value="Exam">Exam Schedule</option>
+                        <option value="Announcement">General Announcement</option>
+                    </select>
+
+                    <label class="text-[10px] font-bold text-gray-500 uppercase block mb-1">Details</label>
+                    <textarea id="p-content" placeholder="Type the full announcement details here..." class="w-full p-3 bg-gray-50 rounded-xl mb-3 text-sm h-32 resize-none border border-gray-200 focus:outline-none focus:border-pw-maroon font-medium leading-relaxed shadow-inner"></textarea>
+
+                    ${state.newPostImage ? `
+                        <div class="relative w-full h-32 mb-4 rounded-xl overflow-hidden border border-gray-200 shadow-sm">
+                            <img src="${state.newPostImage}" class="w-full h-full object-cover">
+                            <button onclick="state.newPostImage=null; render()" class="absolute top-2 right-2 bg-black/80 text-white w-8 h-8 rounded-full flex items-center justify-center hover:bg-black"><i class="fas fa-times text-sm"></i></button>
+                        </div>
+                    ` : ''}
+
+                    <div class="flex gap-3 mt-2">
+                        <label class="flex-[1] bg-white text-pw-maroon border-2 border-pw-maroon py-3 rounded-xl text-[12px] font-black text-center cursor-pointer hover:bg-red-50 flex items-center justify-center shadow-sm">
+                            <i class="fas fa-image mr-2"></i> Add Photo
+                            <input type="file" onchange="handleNewPostImage(event)" class="hidden" accept="image/*">
+                        </label>
+                        <button onclick="addAnn()" class="flex-[1.5] bg-pw-maroon text-white py-3 rounded-xl text-[12px] font-black shadow-md hover:bg-red-900 flex items-center justify-center">
+                            Publish Now <i class="fas fa-paper-plane ml-2"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Announcement
+        // ============================================================
+        function renderAnnouncement(a) {
+            const mode = sessionStorage.getItem('mode') || 'admin';
+            const isAdminMode = mode === 'admin';
+            
+            const authorUser = state.users.find(u => u.name === a.author);
+            const authorAvatar = authorUser && authorUser.avatar ? `<img src="${authorUser.avatar}" class="w-full h-full object-cover rounded-full">` : a.author.charAt(0);
+            
+            const isExpanded = state.expandedPosts.includes(a.id);
+            const isLong = a.content.length > 120;
+            const displayText = (isExpanded || !isLong) ? a.content : a.content.substring(0, 120) + '...';
+
+            let categoryColor = 'bg-blue-100 text-blue-700 border-blue-200';
+            let categoryIcon = 'fas fa-book';
+            if(a.category === 'Events') { categoryColor = 'bg-purple-100 text-purple-700 border-purple-200'; categoryIcon = 'fas fa-calendar-alt'; }
+            else if(a.category === 'Deadlines') { categoryColor = 'bg-red-100 text-red-700 border-red-200'; categoryIcon = 'fas fa-exclamation-circle'; }
+            else if(a.category === 'Exam') { categoryColor = 'bg-yellow-100 text-yellow-700 border-yellow-200'; categoryIcon = 'fas fa-file-alt'; }
+            else if(a.category === 'Announcement') { categoryColor = 'bg-green-100 text-green-700 border-green-200'; categoryIcon = 'fas fa-bullhorn'; }
+
+            const isOwner = a.authorId === state.user.id;
+
+            return `
+                <div class="bg-white p-5 rounded-[20px] shadow-sm border border-gray-200 relative overflow-hidden">
+                    <div class="flex justify-between items-start mb-3">
+                        <span class="text-[9px] font-black px-2.5 py-1.5 rounded-lg uppercase tracking-widest border ${categoryColor}"><i class="${categoryIcon} mr-1"></i> ${a.category}</span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded-md border border-gray-100"><i class="far fa-clock mr-1"></i>${a.date || 'Just now'}</span>
+                            ${isAdminMode && isOwner ? `
+                                <button onclick="deleteAnnouncement(${a.id})" class="text-red-400 hover:text-red-600 bg-gray-50 p-1 rounded-md border border-gray-100">
+                                    <i class="fas fa-trash text-[12px]"></i>
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                    <h3 class="font-black text-[16px] text-gray-900 leading-tight mb-1" onclick="toggleExpand(${a.id})">${a.title}</h3>
+                    <div class="flex items-center mt-2 mb-4">
+                        <div class="w-6 h-6 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-[10px] font-bold mr-2 border border-gray-300">
+                            ${authorAvatar}
+                        </div>
+                        <p class="text-[11px] text-gray-600 font-bold">${a.author}</p>
+                    </div>
+
+                    ${a.image ? `<div class="mb-4 rounded-xl overflow-hidden border border-gray-200 shadow-sm"><img src="${a.image}" onclick="viewImage('${a.image}')" class="w-full h-48 object-cover cursor-pointer hover:opacity-90"></div>` : ''}
+
+                    <div class="text-[13px] text-gray-700 mb-5 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-200 font-medium" onclick="toggleExpand(${a.id})">
+                        ${displayText}
+                        ${isLong ? `<button class="text-pw-maroon font-black ml-1 hover:underline focus:outline-none">${isExpanded ? 'Show less' : 'Read more'}</button>` : ''}
+                    </div>
+
+                    <div class="pt-1">
+                        <button onclick="openStats(${a.id})" class="w-full bg-gray-100 text-gray-800 border border-gray-300 text-[12px] py-3 rounded-xl font-black shadow-sm hover:bg-gray-200 flex justify-center items-center">
+                            <i class="fas fa-chart-bar mr-2"></i> View Performance & Stats (${a.acknowledgements.length} Engagements)
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Student List
+        // ============================================================
+        function renderStudentList() {
+            const users = state.users;
+            const students = users.filter(u => u.role !== 'teacher' && !u.position);
+            const officers = users.filter(u => u.role !== 'teacher' && u.position);
+            const isTeacher = state.user.role === 'teacher';
+
+            const renderUserRow = (u) => `
+                <div class="p-4 mb-3 bg-white border border-gray-200 rounded-2xl flex items-center justify-between shadow-sm hover:border-pw-maroon relative">
+                    <div class="flex items-center gap-4 flex-1 cursor-pointer" onclick="viewStudentProfile(${u.id})">
+                        <div class="w-12 h-12 rounded-full bg-pw-maroon text-white flex items-center justify-center font-black text-lg shadow-inner border-2 border-red-900/20 relative">
+                            ${u.avatar ? `<img src="${u.avatar}" class="w-full h-full object-cover rounded-full">` : u.name.charAt(0)}
+                            ${u.position ? '<div class="absolute -bottom-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full border-2 border-white flex items-center justify-center text-yellow-900 text-[10px] z-10"><i class="fas fa-star"></i></div>' : ''}
+                        </div>
+                        <div>
+                            <div class="text-[13px] font-black text-gray-800">${u.name}</div>
+                            ${u.position ? `<div class="text-[10px] text-yellow-600 font-bold uppercase tracking-wide mt-0.5">${u.position}</div>` : ''}
+                            <div class="text-[10px] text-gray-500 font-bold mt-1"><i class="fas fa-envelope mr-1 text-gray-400"></i>${u.email}</div>
+                        </div>
+                    </div>
+                    ${isTeacher ? `
+                        <div class="relative">
+                            <button id="menu-btn-${u.id}" onclick="event.stopPropagation(); toggleMenu(${u.id})" class="w-10 h-10 flex items-center justify-center text-gray-400 hover:text-pw-maroon hover:bg-red-50 rounded-full"><i class="fas fa-ellipsis-v text-lg"></i></button>
+                            ${state.activeMenuId === u.id ? `
+                                <div id="menu-drop" class="absolute right-0 top-11 bg-white border border-gray-200 shadow-xl rounded-xl w-48 z-30 py-1 overflow-hidden">
+                                    ${!u.position ? `<button onclick="event.stopPropagation(); state.promoteModalId = ${u.id}; state.activeMenuId = null; render();" class="w-full text-left px-5 py-3.5 text-[11px] font-black text-gray-700 hover:bg-gray-50 hover:text-pw-maroon flex items-center"><i class="fas fa-level-up-alt mr-3 text-gray-400"></i> Promote to Officer</button>` : ''}
+                                    <button onclick="event.stopPropagation(); state.removeModalId = ${u.id}; state.activeMenuId = null; render();" class="w-full text-left px-5 py-3.5 text-[11px] font-black text-red-600 hover:bg-red-50 flex items-center border-t border-gray-100"><i class="fas fa-user-minus mr-3 text-red-400"></i> Remove Student</button>
+                                </div>
+                            ` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+            return `
+                <div class="p-4">
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 mb-5 flex items-center justify-between">
+                        <div>
+                            <h2 class="font-black text-[16px] tracking-wide text-gray-900">Student Directory</h2>
+                            <p class="text-[11px] text-gray-500 font-bold mt-1">Grade 12 ICT</p>
+                        </div>
+                        <div class="w-12 h-12 bg-pw-maroon rounded-full flex items-center justify-center text-white text-xl shadow-md"><i class="fas fa-address-book"></i></div>
+                    </div>
+                    
+                    ${officers.length ? `
+                        <h3 class="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-3 mt-2 pl-2 flex items-center"><i class="fas fa-crown text-yellow-500 mr-2"></i> Class Officers</h3>
+                        <div class="mb-6">
+                            ${officers.map(renderUserRow).join('')}
+                        </div>
+                    ` : ''}
+                    
+                    <h3 class="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-3 pl-2 flex items-center"><i class="fas fa-users text-gray-400 mr-2"></i> Students (${students.length})</h3>
+                    ${students.length ? students.map(renderUserRow).join('') : '<div class="bg-white p-8 rounded-2xl border border-gray-200 text-center shadow-sm"><i class="fas fa-user-slash text-4xl text-gray-300 mb-4 block"></i><p class="text-[13px] text-gray-500 font-bold">No regular students enrolled.</p></div>'}
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Profile
+        // ============================================================
+        function renderProfile() {
+            const user = state.user;
+            return `
+                <div class="p-4 pb-8">
+                    <div class="bg-white rounded-[24px] shadow-md border border-gray-200 overflow-hidden relative">
+                        <div class="h-32 bg-pw-maroon relative flex items-center justify-center overflow-hidden">
+                            <div class="absolute inset-0 opacity-10" style="background-image: radial-gradient(circle at 2px 2px, white 1px, transparent 0); background-size: 16px 16px;"></div>
+                            <div class="absolute -bottom-10 -right-10 text-white/10 text-8xl"><i class="fas fa-chalkboard-teacher"></i></div>
+                        </div>
+                        
+                        <div class="relative px-6 pb-6 text-center -mt-14 z-10">
+                            <div class="relative w-28 h-28 mx-auto">
+                                <div class="w-full h-full bg-white rounded-full flex items-center justify-center text-5xl text-pw-maroon font-black border-[6px] border-white shadow-lg overflow-hidden">
+                                    ${user.avatar ? `<img src="${user.avatar}" class="w-full h-full object-cover">` : user.name.charAt(0)}
+                                </div>
+                                <label class="absolute bottom-0 right-0 bg-pw-maroon text-white w-8 h-8 rounded-full flex items-center justify-center border-2 border-white shadow-md cursor-pointer hover:bg-red-900 z-20">
+                                    <i class="fas fa-camera text-[12px]"></i>
+                                    <input type="file" onchange="handleAvatarUpdate(event)" class="hidden" accept="image/*">
+                                </label>
+                            </div>
+                            
+                            <h2 class="font-black text-[20px] text-gray-900 leading-tight mt-3 tracking-tight">${user.name}</h2>
+                            
+                            <div class="flex justify-center mt-2">
+                                <span class="text-[10px] font-black text-pw-maroon uppercase tracking-widest bg-red-50 px-3 py-1.5 rounded-full border border-red-100 flex items-center shadow-sm">
+                                    <i class="fas fa-chalkboard-teacher mr-1.5"></i>
+                                    ${user.position || 'Teacher'}
+                                </span>
+                            </div>
+                        </div>
+                        
+                        <div class="px-6 pb-6 space-y-4">
+                            <h3 class="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-100 pb-2 flex items-center"><i class="fas fa-id-badge mr-2"></i> Teacher Information</h3>
+                            
+                            <div class="space-y-3">
+                                <div class="flex items-center gap-4 bg-gray-50 p-3.5 rounded-2xl border border-gray-200">
+                                    <div class="w-10 h-10 rounded-full bg-white text-gray-500 flex items-center justify-center shadow-sm border border-gray-100"><i class="fas fa-envelope"></i></div>
+                                    <div class="flex-1">
+                                        <label class="text-[9px] text-gray-500 uppercase font-black tracking-widest block">Email Address</label>
+                                        <div class="text-[13px] text-gray-900 font-bold mt-0.5 truncate">${user.email}</div>
+                                    </div>
+                                </div>
+                                
+                                <div class="flex items-center gap-4 bg-gray-50 p-3.5 rounded-2xl border border-gray-200">
+                                    <div class="w-10 h-10 rounded-full bg-white text-gray-500 flex items-center justify-center shadow-sm border border-gray-100"><i class="fas fa-user-tie"></i></div>
+                                    <div class="flex-1">
+                                        <label class="text-[9px] text-gray-500 uppercase font-black tracking-widest block">Role</label>
+                                        <div class="text-[13px] text-gray-900 font-bold mt-0.5">${user.role === 'teacher' ? 'Teacher / Adviser' : 'Class President'}</div>
+                                    </div>
+                                </div>
+                                
+                                ${user.position ? `
+                                    <div class="flex items-center gap-4 bg-gray-50 p-3.5 rounded-2xl border border-gray-200">
+                                        <div class="w-10 h-10 rounded-full bg-white text-gray-500 flex items-center justify-center shadow-sm border border-gray-100"><i class="fas fa-briefcase"></i></div>
+                                        <div class="flex-1">
+                                            <label class="text-[9px] text-gray-500 uppercase font-black tracking-widest block">Position</label>
+                                            <div class="text-[13px] text-gray-900 font-bold mt-0.5">${user.position}</div>
+                                        </div>
+                                    </div>
+                                ` : ''}
+                            </div>
+                            
+                            <div class="mt-6 p-4 bg-red-50 rounded-2xl border border-red-100">
+                                <h4 class="text-[11px] font-black text-pw-maroon uppercase tracking-widest flex items-center"><i class="fas fa-shield-alt mr-2"></i> Teacher Access</h4>
+                                <p class="text-[11px] text-gray-600 font-bold mt-1">You have full access to manage announcements, verify student proofs, and manage the class directory.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Analytics
+        // ============================================================
+        function renderAnalytics() {
+            const users = state.users;
+            const announcements = state.announcements;
+            const students = users.filter(u => u.role !== 'teacher');
+            const totalStudents = students.length;
+            
+            // Calculate engagement metrics
+            let totalAcks = 0;
+            announcements.forEach(a => totalAcks += a.acknowledgements.length);
+            const possibleAcks = announcements.length * totalStudents;
+            const overallEngagement = possibleAcks === 0 ? 0 : Math.round((totalAcks / possibleAcks) * 100);
+            
+            // Category breakdown
+            const categoryCount = {};
+            announcements.forEach(a => {
+                categoryCount[a.category] = (categoryCount[a.category] || 0) + 1;
+            });
+            
+            // Student engagement ranking
+            const studentEngagement = students.map(s => {
+                let acks = 0;
+                announcements.forEach(a => {
+                    if (a.acknowledgements.includes(s.name)) acks++;
+                });
+                return {
+                    name: s.name,
+                    acks: acks,
+                    total: announcements.length,
+                    percentage: announcements.length === 0 ? 0 : Math.round((acks / announcements.length) * 100)
+                };
+            }).sort((a, b) => b.percentage - a.percentage);
+
+            return `
+                <div class="p-4 pb-8">
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 mb-5 flex items-center justify-between">
+                        <div>
+                            <h2 class="font-black text-[16px] tracking-wide text-gray-900">Analytics Dashboard</h2>
+                            <p class="text-[11px] text-gray-500 font-bold mt-1">Classroom Performance Metrics</p>
+                        </div>
+                        <div class="w-12 h-12 bg-pw-maroon rounded-full flex items-center justify-center text-white text-xl shadow-md"><i class="fas fa-chart-line"></i></div>
+                    </div>
+
+                    <!-- Overall Stats -->
+                    <div class="grid grid-cols-2 gap-3 mb-5">
+                        <div class="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm text-center">
+                            <div class="text-[24px] font-black text-pw-maroon">${totalStudents}</div>
+                            <div class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Total Students</div>
+                        </div>
+                        <div class="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm text-center">
+                            <div class="text-[24px] font-black text-pw-maroon">${announcements.length}</div>
+                            <div class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Total Posts</div>
+                        </div>
+                        <div class="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm text-center">
+                            <div class="text-[24px] font-black ${overallEngagement >= 70 ? 'text-green-600' : overallEngagement >= 40 ? 'text-yellow-600' : 'text-red-600'}">${overallEngagement}%</div>
+                            <div class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Overall Engagement</div>
+                        </div>
+                        <div class="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm text-center">
+                            <div class="text-[24px] font-black text-pw-maroon">${totalAcks}</div>
+                            <div class="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Total Acknowledgements</div>
+                        </div>
+                    </div>
+
+                    <!-- Category Breakdown -->
+                    <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm mb-5">
+                        <h3 class="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-3"><i class="fas fa-tags mr-2"></i> Posts by Category</h3>
+                        <div class="space-y-2">
+                            ${Object.keys(categoryCount).length ? Object.keys(categoryCount).map(cat => `
+                                <div class="flex justify-between items-center p-2 bg-gray-50 rounded-lg border border-gray-100">
+                                    <span class="text-[12px] font-bold text-gray-700">${cat}</span>
+                                    <span class="text-[14px] font-black text-pw-maroon">${categoryCount[cat]}</span>
+                                </div>
+                            `).join('') : '<div class="text-[11px] text-gray-500 font-bold text-center p-4">No posts yet</div>'}
+                        </div>
+                    </div>
+
+                    <!-- Student Engagement Ranking -->
+                    <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
+                        <h3 class="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-3"><i class="fas fa-trophy mr-2"></i> Student Engagement Ranking</h3>
+                        ${studentEngagement.length ? studentEngagement.map((s, i) => `
+                            <div class="flex items-center gap-3 p-3 border-b border-gray-100 last:border-0">
+                                <div class="w-6 h-6 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-black text-gray-600">${i + 1}</div>
+                                <div class="flex-1">
+                                    <div class="text-[11px] font-black text-gray-800">${s.name}</div>
+                                    <div class="w-full bg-gray-100 rounded-full h-1.5 mt-1">
+                                        <div class="bg-pw-maroon h-1.5 rounded-full" style="width: ${s.percentage}%"></div>
+                                    </div>
+                                </div>
+                                <div class="text-[12px] font-black text-pw-maroon">${s.percentage}%</div>
+                            </div>
+                        `).join('') : '<div class="text-[11px] text-gray-500 font-bold text-center p-4">No student data available</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Manage Posts
+        // ============================================================
+        function renderManagePosts() {
+            const announcements = state.announcements;
+            
+            return `
+                <div class="p-4 pb-8">
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 mb-5 flex items-center justify-between">
+                        <div>
+                            <h2 class="font-black text-[16px] tracking-wide text-gray-900">Manage Posts</h2>
+                            <p class="text-[11px] text-gray-500 font-bold mt-1">View and manage all announcements</p>
+                        </div>
+                        <button onclick="state.publishExpanded=true; changeView('dashboard')" class="bg-pw-maroon text-white px-4 py-2 rounded-xl text-[11px] font-black shadow-md hover:bg-red-900">
+                            <i class="fas fa-plus mr-1"></i> New Post
+                        </button>
+                    </div>
+
+                    <div class="space-y-3">
+                        ${announcements.length ? announcements.map(a => `
+                            <div class="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="text-[9px] font-black px-2 py-0.5 rounded uppercase ${a.category === 'Events' ? 'bg-purple-100 text-purple-700' : a.category === 'Deadlines' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}">${a.category}</span>
+                                        <span class="text-[9px] text-gray-400"><i class="far fa-clock mr-1"></i>${a.date}</span>
+                                    </div>
+                                    <h4 class="text-[13px] font-black text-gray-800">${a.title}</h4>
+                                    <div class="text-[10px] text-gray-500 mt-1"><i class="fas fa-check mr-1"></i>${a.acknowledgements.length} acknowledgements</div>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button onclick="openStats(${a.id})" class="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200">
+                                        <i class="fas fa-chart-bar text-[12px]"></i>
+                                    </button>
+                                    <button onclick="deleteAnnouncement(${a.id})" class="w-8 h-8 bg-red-50 rounded-full flex items-center justify-center text-red-500 hover:bg-red-100">
+                                        <i class="fas fa-trash text-[12px]"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        `).join('') : '<div class="text-center p-12 bg-white rounded-2xl border border-gray-200 shadow-sm"><i class="fas fa-file-alt text-4xl text-gray-300 mb-4 block"></i><p class="text-sm text-gray-500 font-bold">No posts to manage.</p></div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Stats Modal
+        // ============================================================
+        function renderStatsModal() {
+            const a = state.announcements.find(x => x.id === state.activeStatsId);
+            if (!a) return '';
+            const studentsList = state.users.filter(u => u.role !== 'teacher');
+            const totalEnrolled = studentsList.length;
+            const ackCount = a.acknowledgements.length;
+            const percentage = totalEnrolled > 0 ? Math.round((ackCount / totalEnrolled) * 100) : 0;
+
+            return `
+                <div class="fixed inset-0 bg-black/70 z-[60] flex justify-end backdrop-blur-sm modal-overlay" onclick="closeStats()">
+                    <div class="bg-white w-full max-w-[480px] h-full flex flex-col shadow-2xl modal-content" onclick="event.stopPropagation()">
+                        <div class="bg-pw-maroon text-white px-5 py-4 flex justify-between items-center shadow-md">
+                            <h2 class="font-black text-sm tracking-wide uppercase"><i class="fas fa-chart-pie mr-2"></i> Post Statistics</h2>
+                            <button onclick="closeStats()" class="text-white/80 hover:text-white bg-white/20 w-8 h-8 rounded-full flex items-center justify-center"><i class="fas fa-times"></i></button>
+                        </div>
+                        <div class="p-5 flex-1 overflow-y-auto bg-gray-50">
+                            <h3 class="font-black text-gray-900 text-sm mb-4 line-clamp-2">${a.title}</h3>
+
+                            <div class="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm mb-6">
+                                <div class="flex justify-between text-[11px] font-black text-gray-500 mb-2 uppercase tracking-wide"><span>Acknowledgement Rate</span><span class="text-pw-maroon text-sm">${ackCount}/${totalEnrolled} (${percentage}%)</span></div>
+                                <div class="w-full bg-gray-100 rounded-full h-3 overflow-hidden shadow-inner"><div class="bg-pw-maroon h-3 rounded-full" style="width: ${percentage}%"></div></div>
+                            </div>
+
+                            <h3 class="text-[11px] font-black text-gray-500 mb-3 uppercase tracking-widest pl-1"><i class="fas fa-list-ul mr-1"></i> Acknowledged By (${a.acknowledgements.length})</h3>
+                            <div class="bg-white rounded-xl border border-gray-200 shadow-sm mb-6 overflow-hidden">
+                                ${a.acknowledgements.length ? a.acknowledgements.map((name, i) => {
+                                    const ackUser = state.users.find(u => u.name === name);
+                                    const ackAvatar = ackUser && ackUser.avatar ? `<img src="${ackUser.avatar}" class="w-full h-full object-cover rounded-full">` : name.charAt(0);
+                                    return `
+                                    <div class="text-[12px] font-bold text-gray-800 py-3.5 px-4 flex items-center gap-3 ${i !== a.acknowledgements.length -1 ? 'border-b border-gray-100' : ''}">
+                                        <div class="w-6 h-6 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center text-[10px] border border-gray-200">${ackAvatar}</div> ${name}
+                                    </div>
+                                    `;
+                                }).join('') : '<div class="text-[12px] font-bold text-gray-400 p-5 text-center bg-gray-50">No acknowledgements yet.</div>'}
+                            </div>
+
+                            ${a.category === 'Events' ? `
+                                <h3 class="text-[11px] font-black text-gray-500 mt-2 mb-3 uppercase tracking-widest pl-1"><i class="fas fa-camera-retro mr-1"></i> Submitted Proofs (${a.proofs.length})</h3>
+                                <div class="space-y-3">
+                                    ${a.proofs.length ? a.proofs.map(p => `
+                                        <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm flex items-center justify-between">
+                                            <div onclick="viewImage('${p.image}')" class="flex-1 flex items-center gap-3 cursor-pointer group">
+                                                <div class="w-12 h-12 rounded-lg bg-gray-100 border border-gray-300 overflow-hidden flex-shrink-0 group-hover:border-pw-maroon"><img src="${p.image}" class="w-full h-full object-cover"></div>
+                                                <div class="text-[12px] font-black text-gray-900 group-hover:text-pw-maroon line-clamp-1">${p.student}</div>
+                                            </div>
+                                            <div class="flex items-center gap-2 ml-2">
+                                                ${p.status === 'Pending' ? `
+                                                    <button onclick="verifyProof(${a.id}, '${p.student}')" class="bg-green-600 text-white px-4 py-2 rounded-lg text-[10px] font-black shadow-md hover:bg-green-700 uppercase tracking-wide">Verify</button>
+                                                ` : `<div class="text-[10px] font-black px-3 py-1.5 rounded-lg border ${p.status==='Verified'?'bg-green-100 text-green-700 border-green-300':'bg-orange-100 text-orange-700 border-orange-300'} uppercase tracking-wide">${p.status}</div>`}
+                                            </div>
+                                        </div>
+                                    `).join('') : '<div class="text-[12px] font-bold text-gray-400 p-5 text-center bg-white rounded-xl border border-gray-200">No proofs submitted yet.</div>'}
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Upload Modal
+        // ============================================================
+        function renderUploadModal() {
+            return `
+                <div class="fixed inset-0 bg-black/70 z-[70] flex items-center justify-center p-4 backdrop-blur-sm modal-overlay" onclick="closeUploadModal(event)">
+                    <div class="bg-white w-full max-w-xs p-6 rounded-[24px] shadow-2xl text-center border border-gray-200 modal-content" onclick="event.stopPropagation()">
+                        <div class="w-14 h-14 bg-red-50 text-pw-maroon rounded-full flex items-center justify-center text-2xl mx-auto mb-4 border border-red-100"><i class="fas fa-cloud-upload-alt"></i></div>
+                        <h3 class="font-black text-[16px] text-gray-900 mb-1">Submit Proof</h3>
+                        <p class="text-[11px] text-gray-500 mb-5 font-bold">Attach an image for teacher verification.</p>
+
+                        <label class="block w-full border-2 border-dashed border-gray-300 rounded-xl p-8 cursor-pointer hover:border-pw-maroon hover:bg-red-50 bg-gray-50 mb-5 group relative overflow-hidden">
+                            ${state.tempImage ? `<img src="${state.tempImage}" class="absolute inset-0 w-full h-full object-cover opacity-60"><div class="relative z-10 text-pw-maroon font-black text-sm bg-white/90 p-2 rounded-lg inline-block border border-red-100"><i class="fas fa-check-circle mr-1"></i> Image Selected</div>` : `<div class="text-gray-400 group-hover:text-pw-maroon"><i class="fas fa-camera text-3xl mb-3 block"></i><span class="text-[11px] font-black uppercase tracking-wider">Tap to Browse</span></div>`}
+                            <input type="file" id="f-input" onchange="handleFile(event)" class="hidden" accept="image/*">
+                        </label>
+
+                        <div class="flex gap-3">
+                            <button onclick="closeUploadModal()" class="flex-1 bg-gray-100 text-gray-700 py-3.5 rounded-xl text-[12px] font-black hover:bg-gray-200 border border-gray-200">Cancel</button>
+                            <button onclick="submitUpload()" class="flex-[1.5] bg-pw-maroon text-white py-3.5 rounded-xl text-[12px] font-black shadow-md hover:bg-red-900 ${!state.tempImage ? 'opacity-50 cursor-not-allowed' : ''}" ${!state.tempImage ? 'disabled' : ''}>Submit Proof</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Image Preview
+        // ============================================================
+        function renderImagePreview() {
+            return `
+                <div class="fixed inset-0 bg-black/95 z-[80] flex items-center justify-center p-4 modal-overlay" onclick="state.imagePreviewId=null; render()">
+                    <button class="absolute top-6 right-6 text-white text-2xl w-12 h-12 bg-white/20 rounded-full flex items-center justify-center hover:bg-white/40"><i class="fas fa-times"></i></button>
+                    <img src="${state.imagePreviewId}" class="max-w-full max-h-[90vh] object-contain rounded-xl shadow-2xl border-2 border-gray-700" onclick="event.stopPropagation()">
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Promote Modal
+        // ============================================================
+        function renderPromoteModal() {
+            const u = state.users.find(x => x.id === state.promoteModalId);
+            if (!u) return '';
+            return `
+                <div class="fixed inset-0 bg-black/70 z-[70] flex items-center justify-center p-4 backdrop-blur-sm modal-overlay" onclick="closePromoteModal(event)">
+                    <div class="bg-white w-full max-w-xs rounded-[24px] p-6 shadow-2xl border border-gray-200 modal-content" onclick="event.stopPropagation()">
+                        <div class="flex items-center gap-4 mb-5 pb-5 border-b border-gray-200">
+                            <div class="w-12 h-12 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center text-xl border border-yellow-200"><i class="fas fa-crown"></i></div>
+                            <div>
+                                <h3 class="font-black text-[14px] text-gray-900 leading-tight">Promote to Officer</h3>
+                                <p class="text-[11px] text-gray-500 font-bold truncate w-40 mt-0.5">${u.name}</p>
+                            </div>
+                        </div>
+                        <label class="text-[10px] font-black text-gray-500 uppercase pl-1 block mb-2 tracking-wide">Assign Position Title</label>
+                        <input type="text" id="promote-pos" placeholder="e.g. Vice President, Secretary" class="w-full p-4 border-2 border-gray-200 bg-gray-50 rounded-xl text-sm font-bold focus:border-pw-maroon focus:bg-white outline-none mb-6">
+                        <div class="flex gap-3">
+                            <button onclick="closePromoteModal()" class="flex-1 py-3.5 text-[12px] font-black text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 border border-gray-200">Cancel</button>
+                            <button onclick="confirmPromote()" class="flex-[1.5] py-3.5 text-[12px] font-black text-white bg-pw-maroon rounded-xl shadow-md hover:bg-red-900">Save Role</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Remove Modal
+        // ============================================================
+        function renderRemoveModal() {
+            const u = state.users.find(x => x.id === state.removeModalId);
+            if (!u) return '';
+            return `
+                <div class="fixed inset-0 bg-black/70 z-[70] flex items-center justify-center p-4 backdrop-blur-sm modal-overlay" onclick="closeRemoveModal(event)">
+                    <div class="bg-white w-full max-w-xs rounded-[24px] p-6 shadow-2xl text-center border border-gray-200 modal-content" onclick="event.stopPropagation()">
+                        <div class="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center text-3xl mx-auto mb-4 border border-red-100"><i class="fas fa-user-minus"></i></div>
+                        <h3 class="font-black text-[18px] text-gray-900 mb-2">Remove Student?</h3>
+                        <p class="text-[12px] text-gray-500 mb-6 font-bold px-2">Are you sure you want to remove <span class="text-gray-800 font-black">${u.name}</span> from the directory?</p>
+                        <div class="flex gap-3">
+                            <button onclick="closeRemoveModal()" class="flex-1 py-3.5 text-[12px] font-black text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 border border-gray-200">Cancel</button>
+                            <button onclick="confirmRemove()" class="flex-1 py-3.5 text-[12px] font-black text-white bg-red-600 rounded-xl shadow-md hover:bg-red-700">Remove</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Delete Modal
+        // ============================================================
+        function renderDeleteModal() {
+            return `
+                <div class="fixed inset-0 bg-black/70 z-[70] flex items-center justify-center p-4 backdrop-blur-sm modal-overlay" onclick="closeDeleteModal(event)">
+                    <div class="bg-white w-full max-w-xs rounded-[24px] p-6 shadow-2xl text-center border border-gray-200 modal-content" onclick="event.stopPropagation()">
+                        <div class="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center text-3xl mx-auto mb-4 border border-red-100"><i class="fas fa-trash-alt"></i></div>
+                        <h3 class="font-black text-[18px] text-gray-900 mb-2">Delete Announcement?</h3>
+                        <p class="text-[12px] text-gray-500 mb-6 font-bold px-2">Are you sure you want to delete this announcement? This action cannot be undone.</p>
+                        <div class="flex gap-3">
+                            <button onclick="closeDeleteModal()" class="flex-1 py-3.5 text-[12px] font-black text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 border border-gray-200">Cancel</button>
+                            <button onclick="confirmDelete()" class="flex-1 py-3.5 text-[12px] font-black text-white bg-red-600 rounded-xl shadow-md hover:bg-red-700">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // RENDER: Loading
+        // ============================================================
+        function renderLoading() {
+            return `
+                <div class="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center backdrop-blur-sm modal-overlay">
+                    <div class="bg-white rounded-2xl p-6 shadow-2xl flex items-center gap-4 border border-gray-200">
+                        <div class="spinner" style="border-color: #800000; border-top-color: transparent;"></div>
+                        <span class="text-sm font-black text-gray-800">Loading...</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================
+        // HELPERS
+        // ============================================================
+        function closeDropdowns(e) {
+            if (state.activeMenuId && !e.target.closest('#menu-btn-' + state.activeMenuId) && !e.target.closest('#menu-drop')) {
+                state.activeMenuId = null;
+                render();
+            }
+        }
+
+        // ============================================================
+        // ACTIONS
+        // ============================================================
+        function changeView(view) {
+            state.view = view;
+            state.activeMenuId = null;
+            state.publishExpanded = false;
+            render();
+        }
+
+        function toggleExpand(id) {
+            if (state.expandedPosts.includes(id)) {
+                state.expandedPosts = state.expandedPosts.filter(x => x !== id);
+            } else {
+                state.expandedPosts.push(id);
+            }
+            render();
+        }
+
+        function toggleMenu(id) {
+            state.activeMenuId = state.activeMenuId === id ? null : id;
+            render();
+        }
+
+        function toggleMode() {
+            const current = sessionStorage.getItem('mode') || 'admin';
+            const newMode = current === 'admin' ? 'student' : 'admin';
+            sessionStorage.setItem('mode', newMode);
+            render();
+            showToast(`Switched to ${newMode.toUpperCase()} mode`, 'success');
+        }
+
+        function logout() {
+            sessionStorage.removeItem('user');
+            sessionStorage.removeItem('mode');
+            window.location.href = '/';
+        }
+
+        // ---- Announcements ----
+        async function addAnn() {
+            const title = document.getElementById('p-title').value.trim();
+            const content = document.getElementById('p-content').value.trim();
+            const category = document.getElementById('p-cat').value;
+            if (!title || !content) return showToast('Title and content are required', 'error');
+
+            try {
+                state.loading = true;
+                render();
+                await apiCall('/announcements', {
+                    method: 'POST',
+                    body: { title, category, content, image: state.newPostImage, authorId: state.user.id }
+                });
+                state.publishExpanded = false;
+                state.newPostImage = null;
+                await loadData();
+                state.loading = false;
+                render();
+                showToast('Announcement published!', 'success');
+            } catch (e) {
+                state.loading = false;
+                render();
+                showToast(e.message, 'error');
+            }
+        }
+
+        function openStats(id) {
+            state.activeStatsId = id;
+            render();
+        }
+
+        function closeStats() {
+            state.activeStatsId = null;
+            render();
+        }
+
+        function deleteAnnouncement(id) {
+            state.deleteAnnouncementId = id;
+            state.showDeleteModal = true;
+            render();
+        }
+
+        function closeDeleteModal(e) {
+            if (e && e.target !== e.currentTarget) return;
+            state.showDeleteModal = false;
+            state.deleteAnnouncementId = null;
+            render();
+        }
+
+        async function confirmDelete() {
+            try {
+                state.loading = true;
+                render();
+                await apiCall(`/announcements/${state.deleteAnnouncementId}`, {
+                    method: 'DELETE',
+                    body: { userId: state.user.id }
+                });
+                state.showDeleteModal = false;
+                state.deleteAnnouncementId = null;
+                await loadData();
+                state.loading = false;
+                render();
+                showToast('Announcement deleted!', 'success');
+            } catch (e) {
+                state.loading = false;
+                render();
+                showToast(e.message, 'error');
+            }
+        }
+
+        // ---- Proofs ----
+        async function verifyProof(aid, studentName) {
+            try {
+                state.loading = true;
+                render();
+                await apiCall(`/announcements/${aid}/verify`, {
+                    method: 'POST',
+                    body: { studentName }
+                });
+                await loadData();
+                state.loading = false;
+                render();
+                showToast('Proof verified!', 'success');
+            } catch (e) {
+                state.loading = false;
+                render();
+                showToast(e.message, 'error');
+            }
+        }
+
+        // ---- Upload ----
+        function openUpload(id) {
+            state.uploadModalId = id;
+            render();
+        }
+
+        function closeUploadModal(e) {
+            if (e && e.target !== e.currentTarget) return;
+            state.uploadModalId = null;
+            state.tempImage = null;
+            render();
+        }
+
+        function handleFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const r = new FileReader();
+            r.onload = (ev) => { state.tempImage = ev.target.result; render(); };
+            r.readAsDataURL(file);
+        }
+
+        async function submitUpload() {
+            if (!state.tempImage) return;
+            try {
+                state.loading = true;
+                render();
+                await apiCall(`/announcements/${state.uploadModalId}/proof`, {
+                    method: 'POST',
+                    body: { userId: state.user.id, image: state.tempImage }
+                });
+                state.uploadModalId = null;
+                state.tempImage = null;
+                await loadData();
+                state.loading = false;
+                render();
+                showToast('Proof submitted!', 'success');
+            } catch (e) {
+                state.loading = false;
+                render();
+                showToast(e.message, 'error');
+            }
+        }
+
+        // ---- Images ----
+        function viewImage(src) {
+            state.imagePreviewId = src;
+            render();
+        }
+
+        function handleNewPostImage(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const r = new FileReader();
+            r.onload = (ev) => { state.newPostImage = ev.target.result; render(); };
+            r.readAsDataURL(file);
+        }
+
+        // ---- Avatar ----
+        function handleAvatarUpdate(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const r = new FileReader();
+            r.onload = async (ev) => {
+                try {
+                    state.loading = true;
+                    render();
+                    await apiCall(`/users/${state.user.id}`, {
+                        method: 'PUT',
+                        body: { avatar: ev.target.result }
+                    });
+                    state.user.avatar = ev.target.result;
+                    await loadData();
+                    state.loading = false;
+                    render();
+                    showToast('Profile picture updated', 'success');
+                } catch (err) {
+                    state.loading = false;
+                    render();
+                    showToast(err.message, 'error');
+                }
+            };
+            r.readAsDataURL(file);
+        }
+
+        // ---- Students ----
+        function viewStudentProfile(id) {
+            // For now, just show in directory
+            showToast('Student profile view coming soon', 'success');
+        }
+
+        // ---- Promote / Remove ----
+        function closePromoteModal(e) {
+            if (e && e.target !== e.currentTarget) return;
+            state.promoteModalId = null;
+            render();
+        }
+
+        async function confirmPromote() {
+            const pos = document.getElementById('promote-pos').value.trim();
+            if (!pos) return showToast('Enter a position title', 'error');
+            try {
+                state.loading = true;
+                render();
+                await apiCall(`/users/${state.promoteModalId}/promote`, {
+                    method: 'POST',
+                    body: { position: pos }
+                });
+                state.promoteModalId = null;
+                await loadData();
+                state.loading = false;
+                render();
+                showToast('Student promoted!', 'success');
+            } catch (e) {
+                state.loading = false;
+                render();
+                showToast(e.message, 'error');
+            }
+        }
+
+        function closeRemoveModal(e) {
+            if (e && e.target !== e.currentTarget) return;
+            state.removeModalId = null;
+            render();
+        }
+
+        async function confirmRemove() {
+            try {
+                state.loading = true;
+                render();
+                await apiCall(`/users/${state.removeModalId}`, { method: 'DELETE' });
+                state.removeModalId = null;
+                await loadData();
+                state.loading = false;
+                render();
+                showToast('Student removed', 'success');
+            } catch (e) {
+                state.loading = false;
+                render();
+                showToast(e.message, 'error');
+            }
+        }
+
+        // ---- Profile ----
+        function viewProfile() {
+            state.view = 'profile';
+            render();
+        }
+
+        // ============================================================
+        // INIT
+        // ============================================================
+        async function init() {
+            const user = checkSession();
+            if (!user) return;
+            state.user = user;
+            await loadData();
+            render();
+        }
+
+        // Close modals with Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (state.activeStatsId) { state.activeStatsId = null; render(); }
+                if (state.uploadModalId) { state.uploadModalId = null; state.tempImage = null; render(); }
+                if (state.imagePreviewId) { state.imagePreviewId = null; render(); }
+                if (state.promoteModalId) { state.promoteModalId = null; render(); }
+                if (state.removeModalId) { state.removeModalId = null; render(); }
+                if (state.showDeleteModal) { state.showDeleteModal = false; state.deleteAnnouncementId = null; render(); }
+            }
+        });
+
+        init();
+    </script>
+
+</body>
+</html>
